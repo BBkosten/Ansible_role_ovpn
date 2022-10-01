@@ -1,0 +1,41 @@
+client
+
+tls-client
+auth SHA256
+cipher AES-256-CBC
+remote-cert-tls server
+tls-version-min 1.2
+
+proto {{openvpn_proto}}
+remote {{ openvpn_address }} {{openvpn_port}}
+dev tun
+
+resolve-retry 5
+nobind
+keepalive 5 30
+persist-key
+persist-tun
+verb 3
+
+route-method exe
+route-delay 2
+
+key-direction 1
+
+<ca>
+{{ openvpn_ca_cert.content | base64 -d }}
+</ca>
+
+
+<tls-auth>
+{{ openvpn_tls_auth.content | base64 -d }}
+</tls-auth>
+
+<cert>
+{{ item.0.content | base64 -d }}
+</cert>
+
+
+<key>
+{{ item.1.content | base64 -d }}
+</key>

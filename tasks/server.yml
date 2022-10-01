@@ -1,0 +1,128 @@
+---
+# tasks for server-side
+- name: OpenVPN | Install packages
+  ansible.builtin.apt:
+    name:
+      - openvpn
+      - easy-rsa
+      - iptables-persistent
+    update_cache: yes
+    state: present
+  notify:
+    - enable openvpn
+
+- name: OpenVPN | Enable IPv4 forwarding
+  ansible.posix.sysctl: # На старой версии ансибла тут просто sysctl:
+    name: net.ipv4.ip_forward
+    value: '1'
+    sysctl_set: yes
+    state: present
+    reload: yes
+    ignoreerrors: True
+  failed_when: False
+
+- name: OpenVPN | Create IPTables NAT Chain
+  ansible.builtin.iptables:
+    table: nat
+    chain: POSTROUTING
+    jump: MASQUERADE
+    protocol: all
+    source: '0.0.0.0/0'
+    destination: '0.0.0.0/0'
+    comment: Ansible NAT Masquerade
+  become: true
+
+- name: "OpenVPN | ensure {{ openvpn_dir }}/easy-rsa exists"
+  fale:
+    path: "{{ openvpn_dir }}/easy-rsa"
+    state: directory
+    mode: 0755
+
+- name: OpenVPN | Create vars file
+  copy:
+    dest: "{{ openvpn_easyrsa_dir }}/vars"
+    content: |
+      set_var EASYRSA_ALGO  "ec"
+      set_var EASYRSA_DIGEST "sha512"
+
+- name: OpenVPN | easy-rsa init-pki
+  command:
+  cmd: "{{ openvpn_easyrsa_dir }}/easy-rsa init-pki"
+  chdir: "{{ openvpn_dir }}/easy-rsa"
+  creates: "{{ openvpn_dir }}/easy-rsa/pki" # - Позволяет сказать, что эта команда произвела.
+
+- name: OpenVPN | easy-rsa build-ca
+  command:
+    cmd: "{{ openvpn_easyrsa_dir }}/easy-rsa build-ca nopass"
+    chdir: "{{ openvpn_dir }}/easy-rsa"
+    creates: "{{ openvpn_dir }}/easy-rsa/pki/ca.crt"
+  environment:
+    EASYRSA_BATCH: "yes" # - Эта штука позволяет сказать easyrsa, что мы работаем не руками и тем самым мы избежим запросов на ввод данных руками. (Там много просит вводить, когда делаешь руками)
+
+- name: OpenVPN | easy-rsa generate-dh
+  command:
+    cmd: "{{ openvpn_easyrsa_dir }}/easy-rsa gen-dh"
+    chdir: "{{ openvpn_dir }}/easy-rsa"
+    creates: "{{ openvpn_dir }}/easy-rsa/pki/dh.pem"
+
+- name: OpenVPN | easy-rsa server nopass
+  command:
+    cmd: "{{ openvpn_easyrsa_dir }}/easy-rsa build-server-full server nopass"
+    chdir: "{{ openvpn_dir }}/easy-rsa"
+    creates: "{{ openvpn_dir }}/easy-rsa/pki/issued/server.crt"
+
+# Clients
+
+- name: OpenVPN | easy-rsa client nopass
+  command:
+    cmd: "{{ openvpn_easyrsa_dir }}/easy-rsa build-client-full {{ item }} nopass"
+    chdir: "{{ openvpn_dir }}/easy-rsa"
+    creates: "{{ openvpn_dir }}/easy-rsa/pki/issued/{{ item }}.crt"
+  with_items:
+    - "{{ openvpn_clients }}"
+
+- name: OpenVPN | easy-rsa generate-crl
+  command:
+    cmd: "{{ openvpn_easyrsa_dir }}/easy-rsa gen-crl"
+    chdir: "{{ openvpn_dir }}/easy-rsa"
+    creates: "{{ openvpn_dir }}/easy-rsa/pki/crl.pem"
+
+- name: OpenVPN | openvpn genkey
+  command:
+    cmd: "openvpn --genkey --secret {{ openvpn_dir }}/easy-rsa/pki/ta.key"
+    creates: "{{ openvpn_dir }}/easy-rsa/pki/ta.key"
+
+- name: "OpenVPN | copy files to {{ openvpn_dir }}/server"
+  ansible.builtin.copy:
+    src: "{{ openvpn_dir }}/easy-rsa/pki/{{ item }}"
+    dest: "{{ openvpn_dir }}/server/{{ item | basename }}"
+    mode: "0644"
+    remote_src: true # Модуль copy копирует локальные файлы на машину, а мы в данном случае копируем файлы которые уже там, а локально их у нас нет, поэтому надо указать данный параметр, что это удаленное копирование.
+  loop: # Либо with_item
+    - ca.crt
+    - dh.pem
+    - ta.key
+    - private/ca.rey
+    - private/server.key
+    - issued/server.crt
+
+- name: "OpenVPN | copy files to {{ openvpn_dir }}"
+  ansible.builtin.copy:
+    src: "{{ openvpn_dir }}/easy-rsa/pki/{{ item }}"
+    dest: "{{ openvpn_dir }}/{{ item | basename }}"
+    mode: "0644"
+    remote_src: true
+  loop: # Либо with_item
+    - ca.crt
+    - ta.key
+
+- name: OpenVPN | place server.conf
+  ansible.builtin.template:
+    scr: server.conf.j2
+    dest: "{{ openvpn_dir }}/server.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: # Хэндлер который будет рестартить сервис опенвпн
+    - restart openvpn
+

@@ -1,0 +1,21 @@
+---
+# defaults file for ansible-role-openvpn
+#openvpn_easyrsa_dir: "{{ _ovpn_easyrsa_dir }}" метапеременная, в будущем сделать для парсинга ОС чтоб подходило для любой ОС
+  #"/usr/share/easy-rsa"
+
+openvpn_dir: "/etc/openvpn"
+openvpn_easyrsa_dir: "/usr/share/easy-rsa"
+
+openvpn_ clients:
+  - nora
+
+# Network block
+
+openvpn_port: "1194"
+openvpn_proto: "udp"
+openvpn_network: "10.9.0.0"
+openvpn_netmask: "255.255.255.0"
+
+
+openvpn_address: "{{ ansible_default_ipv4.address }}" # Эту переменную берем из ансибл фактс в данном случае команда ansible -i inventories/vagrant/hosts vpn -m setup
+
